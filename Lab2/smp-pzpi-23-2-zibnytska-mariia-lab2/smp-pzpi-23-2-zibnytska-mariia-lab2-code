@@ -1,0 +1,166 @@
+<?php
+
+$products = include 'data/products.php';
+$cart = [];
+$profile = ['name' => '', 'age' => 0];
+
+function showMenu() {
+    echo "\n################################\n";
+    echo "# ПРОДОВОЛЬЧИЙ МАГАЗИН \"ВЕСНА\" #\n";
+    echo "################################\n";
+    echo "1 Вибрати товари\n";
+    echo "2 Отримати підсумковий рахунок\n";
+    echo "3 Налаштувати свій профіль\n";
+    echo "0 Вийти з програми\n";
+}
+
+function getUserInput($prompt) {
+    echo $prompt;
+    return trim(fgets(STDIN));
+}
+
+function showProducts($products) {
+    $max_name_len = max(array_map('mb_strlen', array_keys($products)));
+
+    $label_number = '№';
+    $label_name = 'НАЗВА';
+    $label_price = 'ЦІНА';
+
+    $name_padding = $max_name_len - mb_strlen($label_name);
+    echo $label_number . '  ' . $label_name . str_repeat(' ', $name_padding) . '  ' . $label_price . PHP_EOL;
+
+    $index = 1;
+    foreach ($products as $name => $price) {
+        $name_spaces = $max_name_len - mb_strlen($name);
+        echo $index . '  '
+            . $name . str_repeat(' ', $name_spaces) . '  '
+            . $price . PHP_EOL;
+        $index++;
+    }
+    echo "-----------\n";
+    echo "0  ПОВЕРНУТИСЯ\n";
+}
+
+
+function selectProducts(&$cart, $products) {
+    while (true) {
+        showProducts($products);
+        $choice = getUserInput("Виберіть товар: ");
+
+        if (!is_numeric($choice)) continue;
+        $choice = (int)$choice;
+
+        if ($choice === 0) break;
+
+        if ($choice < 1 || $choice > count($products)) {
+            echo "ПОМИЛКА! ВКАЗАНО НЕПРАВИЛЬНИЙ НОМЕР ТОВАРУ\n";
+            continue;
+        }
+
+        $productNames = array_keys($products);
+        $selectedProduct = $productNames[$choice - 1];
+        echo "Вибрано: $selectedProduct\n";
+        $quantity = (int)getUserInput("Введіть кількість, штук: ");
+
+        if ($quantity < 0 || $quantity >= 100) {
+            echo "ПОМИЛКА! Кількість має бути від 0 до 99.\n";
+            continue;
+        }
+
+        if ($quantity === 0) {
+            unset($cart[$selectedProduct]);
+            echo "ВИДАЛЯЮ З КОШИКА\n";
+        } else {
+            $cart[$selectedProduct] = $quantity;
+            echo "У КОШИКУ:\nНАЗВА            КІЛЬКІСТЬ\n";
+            foreach ($cart as $name => $qty) {
+                echo "$name  $qty\n";
+            }
+        }
+    }
+}
+
+function showBill($cart, $products) {
+    if (empty($cart)) {
+        echo "КОШИК ПОРОЖНІЙ\n";
+        return;
+    }
+
+    $max_name_len = max(array_map('mb_strlen', array_keys($products)));
+    $label_number = '№';
+    $label_name = 'НАЗВА';
+    $label_price = 'ЦІНА';
+    $label_qty = 'КІЛЬКІСТЬ';
+    $label_sum = 'ВАРТІСТЬ';
+
+    $name_padding = $max_name_len - mb_strlen($label_name);
+    echo $label_number . '  ' . $label_name . str_repeat(' ', $name_padding) . '  '
+        . str_pad($label_price, 5, ' ', STR_PAD_RIGHT) . '  '
+        . str_pad($label_qty, 9, ' ', STR_PAD_RIGHT) . '  '
+        . str_pad($label_sum, 9, ' ', STR_PAD_RIGHT) . "\n";
+
+    $index = 1;
+    $total = 0;
+
+    foreach ($cart as $name => $qty) {
+        $price = $products[$name];
+        $sum = $price * $qty;
+        $name_spaces = $max_name_len - mb_strlen($name);
+
+        echo str_pad($index, mb_strlen($label_number), ' ', STR_PAD_LEFT) . '  '
+            . $name . str_repeat(' ', $name_spaces) . '  '
+            . str_pad($price, 5, ' ', STR_PAD_RIGHT) . '  '
+            . str_pad($qty, 9, ' ', STR_PAD_RIGHT) . '  '
+            . str_pad($sum, 9, ' ', STR_PAD_RIGHT) . "\n";
+
+        $total += $sum;
+        $index++;
+    }
+
+    echo "РАЗОМ ДО CПЛАТИ: $total\n";
+}
+
+
+function setupProfile(&$profile) {
+    while (true) {
+        $name = getUserInput("Ваше імʼя: ");
+        if (preg_match('/[a-zA-Zа-яА-ЯіІїЇєЄґҐ]/u', $name)) {
+            $profile['name'] = $name;
+            break;
+        }
+        echo "ПОМИЛКА! Імʼя не може бути порожнім і повинно містити хоча б одну літеру.\n";
+    }
+
+    while (true) {
+        $age = (int)getUserInput("Ваш вік: ");
+        if ($age >= 7 && $age <= 150) {
+            $profile['age'] = $age;
+            break;
+        }
+        echo "ПОМИЛКА! Вік повинен бути від 7 до 150 років.\n";
+    }
+
+    echo "Профіль оновлено: {$profile['name']}, {$profile['age']} років\n";
+}
+
+while (true) {
+    showMenu();
+    $command = getUserInput("Введіть команду: ");
+
+    switch ($command) {
+        case '1':
+            selectProducts($cart, $products);
+            break;
+        case '2':
+            showBill($cart, $products);
+            break;
+        case '3':
+            setupProfile($profile);
+            break;
+        case '0':
+            echo "Дякуємо за покупки!\n";
+            exit;
+        default:
+            echo "ПОМИЛКА! Введіть правильну команду\n";
+    }
+}
