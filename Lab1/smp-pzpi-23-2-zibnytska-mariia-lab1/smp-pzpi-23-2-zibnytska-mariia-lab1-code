@@ -1,0 +1,235 @@
+#!/bin/bash
+VERSION="1.0"
+QUIET=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help) echo "task2 - Convert CIST CSV to Google Calendar CSV"; 
+        echo "USAGE: task2 [--help|--version] | [[-q] [group] file.csv]" 
+        exit 0 ;;
+        --version) echo "Version: $VERSION"; exit 0 ;;
+        -q|--quiet) QUIET=true; shift ;;
+        *) break ;;
+    esac
+done
+
+group="$1"
+file="$2"
+
+get_groups() {
+    local f="$1"
+    [[ ! -f "$f" ]] && { echo "Error: File '$f' does not exist." >&2; return 1; }
+    
+    groups=$(iconv -f CP1251 -t UTF-8 "$f" 2>/dev/null | tr '\r' '\n' | 
+             awk -F',' 'NR>1 {gsub(/^"|"$/, "", $1); split($1, a, " - "); if(a[1]) print a[1]}' | 
+             sort -u | grep -v "^$")
+    
+    [[ -z "$groups" ]] && { echo "Error: No groups found in file." >&2; return 1; }
+    return 0
+}
+
+process_csv() {
+    local input_file="$1"
+    local selected_group="$2"
+    local date_part=$(echo "$input_file" | sed 's/TimeTable_\([0-9][0-9]_[0-9][0-9]_20[0-9][0-9]\)\.csv/\1/')
+    local output_file="Google_TimeTable_${date_part}.csv"
+    
+    iconv -f CP1251 -t UTF-8 "$input_file" 2>/dev/null | tr '\r' '\n' | 
+    awk -v group="$selected_group" -v quiet="$QUIET" -v output="$output_file" '
+    BEGIN {
+        print "Subject,Start Date,Start Time,End Date,End Time,Description" > output
+        if (!quiet) print "Subject,Start Date,Start Time,End Date,End Time,Description"
+    }
+    
+    function format_date(d) {
+        gsub(/^ +| +$|^"|"$/, "", d)  
+        if (!d) return ""
+        split(d, p, ".")
+        return sprintf("%02d/%02d/%s", p[2], p[1], p[3])
+    }
+
+    function format_time(t) {
+        gsub(/^ +| +$|^"|"$/, "", t)  
+        if (!t) return ""
+        split(t, p, ":")
+        h = p[1] + 0 
+        m = p[2] + 0
+        ampm = (h >= 12) ? "PM" : "AM" 
+        if (h > 12) h -= 12 
+        if (h == 0) h = 12
+        return sprintf("%02d:%02d %s", h, m, ampm)
+    }
+    
+    function clean_field(f) {
+        gsub(/^"|"$/, "", f) 
+        gsub(/,/, ";", f)  
+        return f
+    }
+    
+    function parse_csv_line(line) {
+        delete fields
+        field_count = 0
+        current_field = ""
+        in_quotes = 0
+        
+        for (i = 1; i <= length(line); i++) {
+            char = substr(line, i, 1)
+            
+            if (char == "\"") {
+                in_quotes = !in_quotes  
+            } else if (char == "," && !in_quotes) {
+                fields[++field_count] = current_field  
+                current_field = ""
+            } else {
+                current_field = current_field char
+            }
+        }
+        fields[++field_count] = current_field  
+        return field_count
+    }
+    
+    NR == 1 { next }
+    
+    {
+        n = parse_csv_line($0)
+        
+        for (i = 1; i <= n; i += 13) {
+            if (i + 12 > n) break  
+            
+            tema = clean_field(fields[i])
+            if (tema !~ "^" group " - ") continue
+            
+            records[++total] = tema "|" clean_field(fields[i+1]) "|" clean_field(fields[i+2]) "|" clean_field(fields[i+3]) "|" clean_field(fields[i+4]) "|" clean_field(fields[i+11])
+        }
+    }
+    
+    END {
+    for (i = 1; i <= total; i++) {
+        split(records[i], r, "|")
+
+        desc_temp = r[6]
+        gsub(/;/, ",", desc_temp)
+        split(desc_temp, desc_parts, " ")
+        discipline = desc_parts[1]
+        lesson_type = desc_parts[2]
+
+        split(r[2], d, ".")
+        sort_key = discipline "_" lesson_type "_" d[3] sprintf("%02d", d[2]) sprintf("%02d", d[1]) "_" r[3]
+
+        if (!seen[sort_key]++) {
+            sorted_records[sort_key] = records[i]
+            keys[++key_count] = sort_key
+        }
+    }
+
+    for (i = 1; i <= key_count; i++) {
+        for (j = i + 1; j <= key_count; j++) {
+            if (keys[i] > keys[j]) {
+                temp = keys[i]
+                keys[i] = keys[j]
+                keys[j] = temp
+            }
+        }
+    }
+
+    for (i = 1; i <= key_count; i++) {
+        split(sorted_records[keys[i]], r, "|")
+        subject = r[1]
+        gsub("^" group " - ", "", subject)
+
+        desc_temp = r[6]
+        gsub(/;/, ",", desc_temp)
+        split(desc_temp, desc_parts, " ")
+        discipline = desc_parts[1]
+        lesson_type = desc_parts[2]
+        key = discipline "_" lesson_type
+
+        if (lesson_type == "Лб") {
+            if (i > 1) {
+                split(sorted_records[keys[i-1]], prev_r, "|")
+                prev_desc_temp = prev_r[6]
+                gsub(/;/, ",", prev_desc_temp)
+                split(prev_desc_temp, prev_desc, " ")
+                if (prev_desc[1] == discipline && prev_desc[2] == "Лб" && prev_r[2] == r[2]) {
+                    number = lab_nums[key]
+                } else {
+                    number = ++lab_nums[key]
+                }
+            } else {
+                number = ++lab_nums[key]
+            }
+        } else {
+            number = ++nums[key]
+        }
+
+        subject_with_num = subject "; №" number
+        desc = r[6]
+        gsub(/;/, ",", desc)
+
+        line = "\"" subject_with_num "\",\"" format_date(r[2]) "\",\"" format_time(r[3]) "\",\"" \
+               format_date(r[4]) "\",\"" format_time(r[5]) "\",\"" desc "\""
+
+        print line >> output
+        if (!quiet) print line
+    }
+
+    if (!quiet) print "\nOutput saved to: " output
+}'
+}
+
+if [[ $# -eq 0 ]]; then
+    files=($(ls TimeTable_*.csv 2>/dev/null | sort -t_ -k2,2n -k3,3n -k4,4n))
+    [[ ${#files[@]} -eq 0 ]] && { echo "Error: No TimeTable_*.csv files found." >&2; exit 1; }
+    
+    echo "Choose CSV file:"
+    select file in "${files[@]}"; do
+        [[ -n "$file" ]] && break
+        echo "Invalid selection. Please try again."
+    done
+
+    get_groups "$file" || exit 1
+
+    if [[ $(echo "$groups" | wc -l) -eq 1 ]]; then
+        group="$groups"
+        echo "Only one group found: $group"
+    else
+        echo "Choose group:"
+        select group in $groups; do
+            [[ -n "$group" ]] && break
+            echo "Invalid selection. Please try again."
+        done
+    fi
+
+elif [[ $# -eq 1 ]]; then
+    file="$1"
+    get_groups "$file" || exit 1
+
+    if [[ $(echo "$groups" | wc -l) -eq 1 ]]; then
+        group="$groups"
+        echo "Only one group found: $group"
+    else
+        echo "Choose group:"
+        select group in $groups; do
+            [[ -n "$group" ]] && break
+            echo "Invalid selection. Please try again."
+        done
+    fi
+
+else
+    get_groups "$file" || exit 1
+
+    if echo "$groups" | grep -qx "$group"; then
+        echo "Group '$group' found in file '$file'."
+    else
+        echo "Group '$group' NOT found. Available groups:"
+        echo "$groups"
+        echo "Choose a group:"
+        select group in $groups; do
+            [[ -n "$group" ]] && break
+            echo "Invalid selection. Please try again."
+        done
+    fi
+fi
+
+process_csv "$file" "$group" || exit 1
+echo "Processing completed successfully."
